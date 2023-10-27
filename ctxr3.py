@@ -1,4 +1,4 @@
-from tkinter import Tk, filedialog, Button, Label, Frame, StringVar, OptionMenu
+from tkinter import Tk, filedialog, Button, Label, Frame, StringVar, OptionMenu, ttk
 from PIL import Image, ImageTk
 import struct
 import os
@@ -63,7 +63,8 @@ def save_as_ctxr():
     ctxr_header = bytearray(ctxr_header)
     struct.pack_into('>H', ctxr_header, 8, image.width)
     struct.pack_into('>H', ctxr_header, 10, image.height)
-    struct.pack_into('>I', ctxr_header, 0x80, len(image_bgra.tobytes()) + 28)  # Accounting for padding only
+    struct.pack_into('>I', ctxr_header, 0x80, len(image_bgra.tobytes()))  # Accounting for padding only
+    struct.pack_into('>B', ctxr_header, 0x26, 1)
     
     ctxr_file_path = file_path.rsplit('.', 1)[0] + '.ctxr'
     
@@ -76,33 +77,42 @@ def save_as_ctxr():
 
 
 
+
     
 def batch_convert_ctxr_to_png():
     folder_path = filedialog.askdirectory(title="Select a folder with CTXR files")
     if not folder_path:
         return
 
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            if file.endswith('.ctxr'):
-                file_path = os.path.join(root, file)
-                with open(file_path, 'rb') as f:
-                    ctxr_header = f.read(132)
-                    pixel_data_length = struct.unpack_from('>I', ctxr_header, 0x80)[0]
-                    pixel_data = f.read(pixel_data_length)
-                
-                    width = struct.unpack_from('>H', ctxr_header, 8)[0]
-                    height = struct.unpack_from('>H', ctxr_header, 10)[0]
-                    
-                image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
+    files_to_convert = [f for f in os.listdir(folder_path) if f.endswith('.ctxr')]
+    total_files = len(files_to_convert)
+    progress["maximum"] = total_files
+    progress["value"] = 0
 
-                r, g, b, a = image_bgra.split()
-                image_rgba = Image.merge("RGBA", (b, g, r, a))
+    for file in files_to_convert:
+        file_path = os.path.join(folder_path, file)
+        with open(file_path, 'rb') as f:
+            ctxr_header = f.read(132)
+            pixel_data_length = struct.unpack_from('>I', ctxr_header, 0x80)[0]
+            pixel_data = f.read(pixel_data_length)
 
-                png_file_path = file_path.replace('.ctxr', '.png')
-                image_rgba.save(png_file_path, 'PNG', compress_level=0)
+            width = struct.unpack_from('>H', ctxr_header, 8)[0]
+            height = struct.unpack_from('>H', ctxr_header, 10)[0]
+            mipmap_data = struct.unpack_from('>B', ctxr_header, 0x26)[0]
+
+        image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
+
+        r, g, b, a = image_bgra.split()
+        image_rgba = Image.merge("RGBA", (b, g, r, a))
+
+        png_file_path = file_path.replace('.ctxr', '.png')
+        image_rgba.save(png_file_path, 'PNG', compress_level=0)
+
+        progress["value"] += 1
+        app.update_idletasks()
 
     label.config(text=f"Conversion Completed for folder {folder_path}")
+
 
     
 
@@ -110,42 +120,49 @@ def batch_convert_ctxr_to_png():
 def batch_convert_png_to_ctxr():
     png_folder_path = filedialog.askdirectory(title="Select a folder with PNG files")
     ctxr_folder_path = filedialog.askdirectory(title="Select a folder with original CTXR files for headers")
-    
+
     if not png_folder_path or not ctxr_folder_path:
         return
 
-    for root, dirs, files in os.walk(png_folder_path):
-        for file in files:
-            if file.endswith('.png'):
-                png_file_path = os.path.join(root, file)
-                ctxr_file_path = os.path.join(ctxr_folder_path, file.replace('.png', '.ctxr'))
-                
-                if not os.path.exists(ctxr_file_path):
-                    continue  # Skip if matching CTXR file doesn't exist
+    files_to_convert = [f for f in os.listdir(png_folder_path) if f.endswith('.png')]
+    total_files = len(files_to_convert)
+    progress["maximum"] = total_files
+    progress["value"] = 0
 
-                with open(ctxr_file_path, 'rb') as f:
-                    ctxr_header = f.read(132)
+    for file in files_to_convert:
+        png_file_path = os.path.join(png_folder_path, file)
+        ctxr_file_path = os.path.join(ctxr_folder_path, file.replace('.png', '.ctxr'))
 
-                image = Image.open(png_file_path)
+        if not os.path.exists(ctxr_file_path):
+            continue  # Skip if matching CTXR file doesn't exist
 
-                if image.mode != "RGBA":
-                    image = image.convert("RGBA")
+        with open(ctxr_file_path, 'rb') as f:
+            ctxr_header = f.read(132)
 
-                r, g, b, a = image.split()
-                image_bgra = Image.merge("RGBA", (b, g, r, a))
-                
-                new_ctxr_file_path = png_file_path.replace('.png', '_new.ctxr')
-                with open(new_ctxr_file_path, 'wb') as f:
-                    # Update width, height and pixel data length in ctxr_header
-                    ctxr_header = bytearray(ctxr_header)
-                    struct.pack_into('>H', ctxr_header, 8, image.width)
-                    struct.pack_into('>H', ctxr_header, 10, image.height)
-                    struct.pack_into('>I', ctxr_header, 0x80, len(image_bgra.tobytes()) + 28)  # Including padding only
-                    f.write(ctxr_header)
-                    f.write(image_bgra.tobytes())
-                    f.write(b'\x00' * 28)  # Padding
+        image = Image.open(png_file_path)
+
+        if image.mode != "RGBA":
+            image = image.convert("RGBA")
+
+        r, g, b, a = image.split()
+        image_bgra = Image.merge("RGBA", (b, g, r, a))
+
+        new_ctxr_file_path = png_file_path.replace('.png', '_new.ctxr')
+        with open(new_ctxr_file_path, 'wb') as f:
+            ctxr_header = bytearray(ctxr_header)
+            struct.pack_into('>H', ctxr_header, 8, image.width)
+            struct.pack_into('>H', ctxr_header, 10, image.height)
+            struct.pack_into('>I', ctxr_header, 0x80, len(image_bgra.tobytes()))  # Including padding only
+            struct.pack_into('>B', ctxr_header, 0x26, 1)
+            f.write(ctxr_header)
+            f.write(image_bgra.tobytes())
+            f.write(b'\x00' * 28)  # Padding
+
+        progress["value"] += 1
+        app.update_idletasks()
 
     label.config(text=f"Conversion Completed for folder {png_folder_path}")
+
 
     
 
@@ -168,6 +185,9 @@ def batch_convert():
 app = Tk()
 app.title("CTXR Converter by 316austin316")
 app.geometry("700x500")
+
+progress = ttk.Progressbar(app, orient="horizontal", length=300, mode="determinate")
+progress.pack(pady=20)
 
 icon_path = "resources/face.png"
 image_icon = Image.open(icon_path)
