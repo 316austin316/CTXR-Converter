@@ -1,11 +1,12 @@
 # CTXR-Converter
-Convert CTXR PC files for MGS3HD/MGS2HD to PNG and vice versa.
+Convert CTXR PC files for MGS3HD/MGS2HD to PNG/TGA and vice versa.
 
 ## Features
 
 - Convert CTXR to PNG format.
 - Convert PNG back to CTXR.
-- Batch conversion support for multiple files.
+- Batch conversion support.
+- Single conversion to TGA format (batch not yet implemented)
 
 #Known Bugs:
 

@@ -15,24 +15,44 @@ def open_file():
 
     with open(file_path, 'rb') as file:
         ctxr_header = file.read(132)
+        pixel_length_value = ctxr_header[128:132]  # Extracting the pixel length value from CTXR header
         pixel_data_length = struct.unpack_from('>I', ctxr_header, 0x80)[0]
         pixel_data = file.read(pixel_data_length)
     
         width = struct.unpack_from('>H', ctxr_header, 8)[0]
         height = struct.unpack_from('>H', ctxr_header, 10)[0]
-        mipmap_data = struct.unpack_from('>B', ctxr_header, 0x26)[0]
     
-    image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
-    r, g, b, a = image_bgra.split()
-    image_rgba = Image.merge("RGBA", (b, g, r, a))
-    
-    output_file_path = file_path.replace('.ctxr', f'_rgba.{chosen_format.get()}')
-    if chosen_format.get() == "dds":
-        imageio.imwrite(output_file_path, image_rgba)
+    output_file_path = file_path.replace('.ctxr', f'.{chosen_format.get()}')
+
+    if chosen_format.get() == "tga":
+        # Constructing the TGA header
+        tga_header = bytearray(18)
+        tga_header[2] = 2  # Uncompressed True-color Image
+        tga_header[12] = width & 0xFF  # Width - lower byte
+        tga_header[13] = (width >> 8) & 0xFF  # Width - higher byte
+        tga_header[14] = height & 0xFF  # Height - lower byte
+        tga_header[15] = (height >> 8) & 0xFF  # Height - higher byte
+        tga_header[16] = 32  # Bits per pixel
+        tga_header[17] = 32  # 32 bits alpha
+
+        # Footer to be added to the end of the TGA files
+        tga_footer = bytes.fromhex("00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01")
+
+        with open(output_file_path, 'wb') as f:
+            f.write(tga_header)
+            f.write(pixel_length_value)
+            f.write(pixel_data)
+            f.write(tga_footer)
     else:
+        image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
+        r, g, b, a = image_bgra.split()
+        image_rgba = Image.merge("RGBA", (b, g, r, a))
         image_rgba.save(output_file_path, chosen_format.get().upper(), compress_level=0)
 
     label.config(text=f"File saved as {output_file_path}")
+
+
+
 
 
 def save_as_ctxr():
@@ -42,38 +62,55 @@ def save_as_ctxr():
         label.config(text="Please open a CTXR file first.")
         return
 
-    file_path = filedialog.askopenfilename(title="Select an image file", filetypes=[("Image files", ".png")])
+    file_path = filedialog.askopenfilename(title="Select an image file", filetypes=[("TGA files", "*.tga"), ("PNG files", "*.png")])
     if not file_path:
         return
-    
-    # Handle DDS separately using imageio
-    if file_path.endswith('.dds'):
-        image_array = imageio.imread(file_path)
-        image = Image.fromarray(image_array)
-    else:
+
+    if file_path.endswith(".tga"):
+        with open(file_path, 'rb') as f:
+            tga_header = f.read(18)
+            width = struct.unpack_from('<H', tga_header, 12)[0]
+            height = struct.unpack_from('<H', tga_header, 14)[0]
+            bits_per_pixel = tga_header[16]
+            
+            if bits_per_pixel != 32:
+                label.config(text="Only 32-bit TGA files are supported.")
+                return
+            
+            # Skip the pixel length value in TGA
+            f.seek(18 + 4)
+            pixel_data = f.read(width * height * 4)
+
+    elif file_path.endswith(".png"):
         image = Image.open(file_path)
+        if image.mode != "RGBA":
+            # Add an alpha channel if it doesn't have one
+            image = image.convert("RGBA")
 
-    if image.mode != "RGBA":
-        # Add an alpha channel if it doesn't have one
-        image = image.convert("RGBA")
+        r, g, b, a = image.split()
+        image_bgra = Image.merge("RGBA", (b, g, r, a))
+        pixel_data = image_bgra.tobytes()
+        width, height = image.size
 
-    r, g, b, a = image.split()
-    image_bgra = Image.merge("RGBA", (b, g, r, a))
-    
+    else:
+        label.config(text="Unsupported file format.")
+        return
+
     ctxr_header = bytearray(ctxr_header)
-    struct.pack_into('>H', ctxr_header, 8, image.width)
-    struct.pack_into('>H', ctxr_header, 10, image.height)
-    struct.pack_into('>I', ctxr_header, 0x80, len(image_bgra.tobytes()))  # Accounting for padding only
+    struct.pack_into('>H', ctxr_header, 8, width)
+    struct.pack_into('>H', ctxr_header, 10, height)
+    struct.pack_into('>I', ctxr_header, 0x80, len(pixel_data))  # Accounting for pixel data size
     struct.pack_into('>B', ctxr_header, 0x26, 1)
     
     ctxr_file_path = file_path.rsplit('.', 1)[0] + '.ctxr'
     
     with open(ctxr_file_path, 'wb') as file:
         file.write(ctxr_header)
-        file.write(image_bgra.tobytes())
+        file.write(pixel_data)
         file.write(b'\x00' * 28)  # Padding
 
     label.config(text=f"File saved as {ctxr_file_path}")
+
 
 
 
@@ -166,9 +203,6 @@ def batch_convert_png_to_ctxr():
 
     
 
-
-
-
 def batch_convert():
     input_format = chosen_batch_format.get().split(' to ')[0]
     output_format = chosen_batch_format.get().split(' to ')[1]
@@ -220,7 +254,7 @@ save_button = Button(frame, text="Save as CTXR", command=save_as_ctxr, bg='#FF98
 save_button.grid(row=2, column=1, pady=10, sticky="ew")
 
 # Dropdown for PNG choice for individual conversion
-format_options = ["png"]
+format_options = ["png", "tga"] 
 chosen_format.set(format_options[0])  # set default value
 format_dropdown = OptionMenu(frame, chosen_format, *format_options)
 format_dropdown.grid(row=3, column=0, pady=10)
