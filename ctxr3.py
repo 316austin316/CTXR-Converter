@@ -97,58 +97,56 @@ def open_file():
 
 def save_as_ctxr():
     global ctxr_header
+    
 
     if not ctxr_header:
         label.config(text="Please open a CTXR file first.")
         return
-    
-    # Define supported file types for the dialog
-    supported_file_types = [
-        ("TGA files", "*.tga"),
-        ("DDS files", "*.dds"),
-        ("PNG files", "*.png"),
-        ("All Supported Formats", "*.tga;*.dds;*.png")
-    ]
 
-    file_path = filedialog.askopenfilename(title="Select an image file", filetypes=supported_file_types)
+    # Update file dialog to show all supported formats
+    file_path = filedialog.askopenfilename(
+        title="Select an image file",
+        filetypes=[("All Supported Formats", "*.tga;*.dds;*.png"),
+                   ("TGA files", "*.tga"),
+                   ("DDS files", "*.dds"),
+                   ("PNG files", "*.png")]
+    )
     if not file_path:
         return
 
-    if file_path.endswith(".tga"):
-        with open(file_path, 'rb') as f:
-            tga_header = f.read(18)
-            width = struct.unpack_from('<H', tga_header, 12)[0]
-            height = struct.unpack_from('<H', tga_header, 14)[0]
-            bits_per_pixel = tga_header[16]
-            
-            if bits_per_pixel != 32:
-                label.config(text="Only 32-bit TGA files are supported.")
-                return
-            
-            # Skip the pixel length value in TGA
-            f.seek(18 + 4)
-            pixel_data = f.read(width * height * 4)
+    if file_path.endswith(".tga") or file_path.endswith(".png"):
+        if file_path.endswith(".tga"):
+            # Handle TGA files
+            with open(file_path, 'rb') as f:
+                tga_header = f.read(18)
+                width = struct.unpack_from('<H', tga_header, 12)[0]
+                height = struct.unpack_from('<H', tga_header, 14)[0]
+                bits_per_pixel = tga_header[16]
+                if bits_per_pixel != 32:
+                    label.config(text="Only 32-bit TGA files are supported.")
+                    return
+                f.seek(18 + 4)
+                pixel_data = f.read(width * height * 4)
+        else:
+            # Handle PNG files
+            image = Image.open(file_path)
+            if image.mode != "RGBA":
+                image = image.convert("RGBA")
+            r, g, b, a = image.split()
+            image_bgra = Image.merge("RGBA", (b, g, r, a))
+            pixel_data = image_bgra.tobytes()
+            width, height = image.size
 
-    elif file_path.endswith(".png"):
-        image = Image.open(file_path)
-        if image.mode != "RGBA":
-            # Add an alpha channel if it doesn't have one
-            image = image.convert("RGBA")
+        mipmap_count = 1  # Assuming no mipmaps for PNG/TGA
 
-        r, g, b, a = image.split()
-        image_bgra = Image.merge("RGBA", (b, g, r, a))
-        pixel_data = image_bgra.tobytes()
-        width, height = image.size
-        
     elif file_path.endswith(".dds"):
+        # Handle DDS files
         with open(file_path, 'rb') as f:
-            dds_header = f.read(128)  # DDS header including DX10 extended header is 128 bytes
+            dds_header = f.read(128)
             height = struct.unpack_from('<I', dds_header, 12)[0]
             width = struct.unpack_from('<I', dds_header, 16)[0]
-            mipmap_count = struct.unpack_from('<I', dds_header, 28)[0]  # Number of mipmaps
-
-            # Read entire DDS data starting after the header
-            dds_data = f.read()  # This includes main pixel data and all mipmaps
+            mipmap_count = struct.unpack_from('<I', dds_header, 28)[0]
+            pixel_data = f.read()  # This includes main pixel data and all mipmaps
 
     else:
         label.config(text="Unsupported file format.")
@@ -157,17 +155,18 @@ def save_as_ctxr():
     ctxr_header = bytearray(ctxr_header)
     struct.pack_into('>H', ctxr_header, 8, width)
     struct.pack_into('>H', ctxr_header, 10, height)
-    total_data_length = len(dds_data) + 28  # Including 28 bytes padding
-    struct.pack_into('>I', ctxr_header, 0x80, total_data_length)  # Total data size including padding
-    struct.pack_into('>B', ctxr_header, 0x26, mipmap_count)  # Update with the actual mipmap count
+    total_data_length = len(pixel_data)  # Including 28 bytes padding for all formats
+    struct.pack_into('>I', ctxr_header, 0x80, total_data_length)
+    struct.pack_into('>B', ctxr_header, 0x26, mipmap_count)
 
     ctxr_file_path = file_path.rsplit('.', 1)[0] + '.ctxr'
     with open(ctxr_file_path, 'wb') as file:
         file.write(ctxr_header)
-        file.write(dds_data)
-        file.write(b'\x00' * 28)  # Padding after the DDS data
+        file.write(pixel_data)
+        file.write(b'\x00' * 28)  # Padding after the pixel data for all formats
 
     label.config(text=f"File saved as {ctxr_file_path}")
+
 
 
 
