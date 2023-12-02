@@ -101,8 +101,16 @@ def save_as_ctxr():
     if not ctxr_header:
         label.config(text="Please open a CTXR file first.")
         return
+    
+    # Define supported file types for the dialog
+    supported_file_types = [
+        ("TGA files", "*.tga"),
+        ("DDS files", "*.dds"),
+        ("PNG files", "*.png"),
+        ("All Supported Formats", "*.tga;*.dds;*.png")
+    ]
 
-    file_path = filedialog.askopenfilename(title="Select an image file", filetypes=[("TGA files", "*.tga"), ("PNG files", "*.png"), ("DDS files", "*.dds")])
+    file_path = filedialog.askopenfilename(title="Select an image file", filetypes=supported_file_types)
     if not file_path:
         return
 
