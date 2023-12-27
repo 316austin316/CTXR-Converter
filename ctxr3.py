@@ -417,7 +417,7 @@ def batch_convert():
     func_map[chosen_batch_format.get()]()
 
 app = Tk()
-app.title("CTXR Converter 1.5 by 316austin316")
+app.title("CTXR Converter 1.5.3 by 316austin316")
 app.geometry("700x500")
 
 progress = ttk.Progressbar(app, orient="horizontal", length=300, mode="determinate")
