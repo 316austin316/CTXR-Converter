@@ -90,6 +90,8 @@ def open_file():
         image_rgba.save(output_file_path, chosen_format.get().upper(), compress_level=0)
 
     label.config(text=f"File saved as {output_file_path}")
+    
+
 
 
 
@@ -106,16 +108,18 @@ def save_as_ctxr():
     # Update file dialog to show all supported formats
     file_path = filedialog.askopenfilename(
         title="Select an image file",
-        filetypes=[("All Supported Formats", "*.tga;*.dds;*.png"),
-                   ("TGA files", "*.tga"),
-                   ("DDS files", "*.dds"),
-                   ("PNG files", "*.png")]
+        filetypes=[("All Supported Formats", "*.tga;*.dds;*.png;*.TGA;*.DDS;*.PNG"),
+                   ("TGA files", "*.tga;*.TGA"),
+                   ("DDS files", "*.dds;*.DDS"),
+                   ("PNG files", "*.png;*.PNG")]
     )
     if not file_path:
         return
 
-    if file_path.endswith(".tga") or file_path.endswith(".png"):
-        if file_path.endswith(".tga"):
+    file_extension = os.path.splitext(file_path)[1].lower() 
+
+    if file_extension == ".tga" or file_extension == ".png":
+        if file_extension == ".tga":
             # Handle TGA files
             with open(file_path, 'rb') as f:
                 tga_header = f.read(18)
@@ -139,7 +143,7 @@ def save_as_ctxr():
 
         mipmap_count = 1  # Assuming no mipmaps for PNG/TGA
 
-    elif file_path.endswith(".dds"):
+    elif file_extension == ".dds":
         # Handle DDS files
         with open(file_path, 'rb') as f:
             dds_header = f.read(128)
@@ -228,7 +232,7 @@ def batch_convert_png_to_ctxr():
     if not png_folder_path or not ctxr_folder_path:
         return
 
-    files_to_convert = [f for f in os.listdir(png_folder_path) if f.endswith('.png')]
+    files_to_convert = [f for f in os.listdir(png_folder_path) if f.lower().endswith('.png')]
     total_files = len(files_to_convert)
     progress["maximum"] = total_files
     progress["value"] = 0
@@ -358,7 +362,7 @@ def batch_convert_dds_to_ctxr():
         # ... (include all the specific file names here)
     ]
 
-    files_to_convert = [f for f in os.listdir(dds_folder_path) if f.endswith('.dds')]
+    files_to_convert = [f for f in os.listdir(dds_folder_path) if f.lower().endswith('.dds')]
     total_files = len(files_to_convert)
     progress["maximum"] = total_files
     progress["value"] = 0

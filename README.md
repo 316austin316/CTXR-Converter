@@ -2,29 +2,26 @@
 Convert CTXR PC files for MGS3HD/MGS2HD to PNG/TGA/DDS and vice versa.
 
 # Guide:
-Open Ctxr, it will convert to an image file.
-Saving will ask you for original CTXR for header reference and image file.
-Not all files work yet. (SOON!)
+Open any Ctxr file first, the program will convert to an image file of your choice.
+Saving will ask you for an original CTXR for header reference and which image file you'd like to convert to CTXR.
+Not all files work yet. (Soon™)
 
 ## Features
 
-- Convert CTXR to PNG format.
-- Convert PNG back to CTXR.
+- Convert CTXR to multiple image formats.
 - Batch conversion support.
-- Single conversion to TGA format (batch not yet implemented)
-- Batch and Single Conversion support for DDS.
 
-#Known Bugs:
+## Known Bugs:
 
 - Progress bar hangs during large batches sometimes. (don't worry if you see this, the program is functioning fine)
 - If you get an error about image data, try to convert to .tga or .dds.
 
 # To Do:
 - Texture viewer?
-- Fix edge cases and problematic files. (I think I fixed them?)
+- Fix edge cases and problematic files. (I think I fixed them all, but if you find one, let me know.)
 - Add better error handling.
 - Breakdown CTXR file header more.
-- PS3 Support?
 - TGA batch conversion feature.
 - Fix UI elements being flipped on .TGA
-- SWitch Support?
+- Switch Support (WIP: Switch swizzle is complex, I'm working on it.)
+- VITA, PS3, PS4, PS5 support? (Need more samples to work with if you have any, send some.)
