@@ -43,9 +43,29 @@ def open_file():
         print(f"Pixel data length: {pixel_data_length} (found at offset 0x80)")
         print(f"{width} and {height} found at offsets 0x8 and 0xA respectively")
         
+        # Load image from pixel data
+        image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
+        r, g, b, a = image_bgra.split()
+        image_rgba = Image.merge("RGBA", (b, g, r, a))
+        
     
     output_file_path = file_path.replace('.ctxr', f'.{chosen_format.get()}')
+    
+    # Generate mipmaps and store them in a list
+    mipmaps = [image_rgba]
+    mipmap_count = 1
+    while mipmaps[-1].width > 1 or mipmaps[-1].height > 1:
+        # Reduce the image size by half for each mipmap level
+        mip_image = mipmaps[-1].resize(
+            (max(1, mipmaps[-1].width // 2), max(1, mipmaps[-1].height // 2)),
+            Image.BILINEAR  # Use BILINEAR filter to reduce scaling artifacts
+        )
+        mipmaps.append(mip_image)
+        mipmap_count += 1
+        print(f"Generated mipmap level {mipmap_count}: {mip_image.width}x{mip_image.height}")
 
+
+    
     if chosen_format.get() == "tga":
         # Constructing the TGA header
         tga_header = bytearray(18)
@@ -78,11 +98,18 @@ def open_file():
         # Update DDS header
         struct.pack_into("<I", dds_header, 12, height)
         struct.pack_into("<I", dds_header, 16, width)
+        struct.pack_into("<I", dds_header, 28, mipmap_count)
 
-        # Save as DDS
+        # Save as DDS with generated mipmaps
         with open(output_file_path, "wb") as dds_file:
             dds_file.write(dds_header)
-            dds_file.write(pixel_data)
+            for mip_image in mipmaps:
+                # Convert each mipmap level to raw BGRA bytes and write to the file
+                mip_data = mip_image.tobytes("raw", "BGRA")
+                 # Ensure padding to 4-byte boundary for each mipmap level
+                if len(mip_data) % 4 != 0:
+                    mip_data += b'\x00' * (4 - (len(mip_data) % 4))
+                dds_file.write(mip_data)
     else:
         image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
         r, g, b, a = image_bgra.split()
