@@ -17,6 +17,7 @@ Not all files work yet. (Soon™)
 
 - Progress bar hangs during large batches sometimes. (don't worry if you see this, the program is functioning fine)
 - If you get an error about image data, try to convert to .tga or .dds.
+- No Mipmaps (yet)
 
 # To Do:
 - Texture viewer?
@@ -27,3 +28,4 @@ Not all files work yet. (Soon™)
 - Fix UI elements being flipped on .TGA
 - Switch Support (WIP: Switch swizzle is complex, I'm working on it.)
 - VITA, PS3, PS4, PS5 support? (Need more samples to work with if you have any, send some.)
+- Mipmap Support (WIP)
