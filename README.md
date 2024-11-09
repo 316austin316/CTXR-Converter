@@ -1,7 +1,7 @@
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/U7U8EQSU2)
 
 # CTXR-Converter
-Convert CTXR PC files for MGS3HD/MGS2HD to PNG/TGA/DDS and vice versa.
+Convert CTXR files for MGS3HD/MGS2HD to PNG/TGA/DDS and vice versa.
 
 # Guide:
 Open any Ctxr file first, the program will convert to an image file of your choice.
