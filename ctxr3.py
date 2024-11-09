@@ -1,7 +1,14 @@
-from tkinter import Tk, filedialog, Button, Label, Frame, StringVar, OptionMenu, ttk
+import tkinter as tk
+from tkinter import ttk
+from tkinter import Label, Button, OptionMenu, StringVar, Frame, filedialog, messagebox
 from PIL import Image, ImageTk
 import struct
 import os
+import numpy as np
+import ps3_ctxr_module
+from ps3_ctxr_module import convert_ps3_ctxr_to_dds, batch_convert_ps3_ctxr_to_dds
+
+global label
 
 
 ctxr_header = None
@@ -443,59 +450,91 @@ def batch_convert():
     # Call the relevant function
     func_map[chosen_batch_format.get()]()
 
-app = Tk()
-app.title("CTXR Converter 1.5.3 by 316austin316")
-app.geometry("700x500")
+# Initialize the main application window
+app = tk.Tk()
+app.title("CTXR Converter 1.6 by 316austin316")
+app.geometry("700x600")
 
-progress = ttk.Progressbar(app, orient="horizontal", length=300, mode="determinate")
-progress.pack(pady=20)
+# Set the application icon
+#icon_path = "resources/face.PNG"
+#image_icon = Image.open(icon_path)
+#photo_icon = ImageTk.PhotoImage(image_icon)
+#app.iconphoto(False, photo_icon)
 
-icon_path = "resources/face.PNG"
-image_icon = Image.open(icon_path)
-photo_icon = ImageTk.PhotoImage(image_icon)
-app.iconphoto(False, photo_icon)
+# Create and pack the main image label
+#label_image = Label(app, image=photo_icon)
+#label_image.pack(pady=5)
 
-label_image = Label(app, image=photo_icon)
-label_image.pack(pady=5)
-
+# Create and pack the waiting label
 label = Label(app, text="Kept you waiting huh?")
 label.pack(pady=5)
 
+# Initialize progress bar
+progress = ttk.Progressbar(app, orient="horizontal", length=300, mode="determinate")
+progress.pack(pady=20)
 
-chosen_format = StringVar()
-chosen_batch_format = StringVar()
+# Create the main frame
+main_frame = Frame(app)
+main_frame.pack(pady=10, padx=10, fill='both', expand=True)
 
-frame = Frame(app)
-frame.pack(pady=10, padx=10)
+# Create the Notebook (tabbed interface)
+notebook = ttk.Notebook(main_frame)
+notebook.pack(fill='both', expand=True)
 
-title = Label(frame, text="CTXR Converter", font=("Arial", 16, "bold"))
+# ----- General Conversion Tab -----
+general_frame = Frame(notebook)
+notebook.add(general_frame, text='PC')
+
+# Title and Description
+title = Label(general_frame, text="CTXR Converter", font=("Arial", 16, "bold"))
 title.grid(row=0, column=0, columnspan=2, pady=10)
 
-description = Label(frame, text="For MGS2/3HD PC\nCode by 316austin316", font=("Arial", 10))
+description = Label(general_frame, text="For MGS2/3HD \nCode by 316austin316", font=("Arial", 10))
 description.grid(row=1, column=0, columnspan=2, pady=10)
 
-open_button = Button(frame, text="Open CTXR File", command=open_file, bg='#4CAF50', fg='white', font=("Arial", 10, "bold"))
-open_button.grid(row=2, column=0, pady=10, sticky="ew")
+# Open and Save Buttons
+open_button = Button(general_frame, text="Open CTXR File", command=open_file, bg='#4CAF50', fg='white', font=("Arial", 10, "bold"))
+open_button.grid(row=2, column=0, pady=10, padx=5, sticky="ew")
 
-save_button = Button(frame, text="Save as CTXR", command=save_as_ctxr, bg='#FF9800', fg='white', font=("Arial", 10, "bold"))
-save_button.grid(row=2, column=1, pady=10, sticky="ew")
+save_button = Button(general_frame, text="Save as CTXR", command=save_as_ctxr, bg='#FF9800', fg='white', font=("Arial", 10, "bold"))
+save_button.grid(row=2, column=1, pady=10, padx=5, sticky="ew")
 
-
-# Dropdown for choice for individual conversion
+# Dropdown for individual conversion format choice
 format_options = ["png", "tga", "dds"] 
-chosen_format.set(format_options[0])  # set default value
-format_dropdown = OptionMenu(frame, chosen_format, *format_options)
-format_dropdown.grid(row=3, column=0, pady=10)
+chosen_format = StringVar(value=format_options[0])  # set default value
+format_dropdown = OptionMenu(general_frame, chosen_format, *format_options)
+format_dropdown.grid(row=3, column=0, pady=10, padx=5, sticky="ew")
 
 # Dropdown for batch conversion format choice
 batch_format_options = ["ctxr to png", "png to ctxr", "ctxr to dds", "dds to ctxr"]
-chosen_batch_format.set(batch_format_options[0])
-batch_format_dropdown = OptionMenu(frame, chosen_batch_format, *batch_format_options)
-batch_format_dropdown.grid(row=4, column=0, pady=10)
+chosen_batch_format = StringVar(value=batch_format_options[0])
+batch_format_dropdown = OptionMenu(general_frame, chosen_batch_format, *batch_format_options)
+batch_format_dropdown.grid(row=4, column=0, pady=10, padx=5, sticky="ew")
 
 # Button for batch conversion
-batch_convert_button = Button(frame, text="Batch Convert", command=batch_convert, bg='#2196F3', fg='white', font=("Arial", 10, "bold"))
-batch_convert_button.grid(row=4, column=1, pady=10, sticky="ew")
+batch_convert_button = Button(general_frame, text="Batch Convert", command=batch_convert, bg='#2196F3', fg='white', font=("Arial", 10, "bold"))
+batch_convert_button.grid(row=4, column=1, pady=10, padx=5, sticky="ew")
 
+# Configure grid weights for responsiveness
+for i in range(5):
+    general_frame.grid_rowconfigure(i, weight=1)
+for i in range(2):
+    general_frame.grid_columnconfigure(i, weight=1)
 
+# ----- PS3 Conversion Tab -----
+ps3_frame = Frame(notebook)
+notebook.add(ps3_frame, text='PS3')
+
+# PS3 Specific Conversion Button
+ps3_button = Button(ps3_frame, text="Convert PS3 CTXR to DDS", command=convert_ps3_ctxr_to_dds, bg='#9C27B0', fg='white', font=("Arial", 10, "bold"))
+ps3_button.pack(pady=20, padx=20, fill='x')
+
+# PS3 Batch Conversion Button
+ps3_batch_button = Button(ps3_frame, text="Batch Convert PS3 CTXR to DDS", command=batch_convert_ps3_ctxr_to_dds, bg='#673AB7', fg='white', font=("Arial", 10, "bold"))
+
+ps3_batch_button.pack(pady=10, padx=20, fill='x')
+
+# Add more PS3-specific widgets here if needed
+
+# Start the main event loop
 app.mainloop()
