@@ -26,6 +26,6 @@ Not all files work yet. (Soon™)
 - Breakdown CTXR file header more.
 - TGA batch conversion feature.
 - Fix UI elements being flipped on .TGA
-- Switch Support (WIP: Switch swizzle is complex, I'm working on it.)
-- VITA, PS3, PS4, PS5 support? (Need more samples to work with if you have any, send some.)
-- Mipmap Support (WIP)
+- Switch Support (WIP: Switch swizzle is complex, I'm working on it... yes still stuck :/)
+- VITA, PS3, PS5 support? (Need more samples to work with if you have any, send some.. PS4 is the same as PC so it should work, let me know)
+- Full Mipmap Support (WIP)
