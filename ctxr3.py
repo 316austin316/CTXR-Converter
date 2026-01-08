@@ -7,6 +7,21 @@ import os
 import numpy as np
 import ps3_ctxr_module
 from ps3_ctxr_module import convert_ps3_ctxr_to_dds, batch_convert_ps3_ctxr_to_dds
+import logging
+import traceback
+from datetime import datetime
+from image_viewer import ImageViewer
+from ctxr_utils import parse_mipmap_info, CTXRError
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('ctxr_converter.log'),
+        logging.StreamHandler()
+    ]
+)
 
 # Global variables to store the original header and complete mipmap info
 global label, ctxr_header, original_mipmap_info, original_final_padding
@@ -15,65 +30,39 @@ original_mipmap_info = []      # List of dicts: for each mipmap level: {"padding
 original_final_padding = b""  # Final padding after the last mipmap
 
 
-def read_padding_and_size(file_obj, expected_mip_size, max_pad=32):
-    """
-    Reads padding bytes from file_obj until the next 4 bytes (when peeked) equal expected_mip_size.
-    Returns a tuple (padding, mip_size, mip_data) where:
-      - padding: all zero bytes read as padding,
-      - mip_size: the 4-byte integer (big-endian) that was read,
-      - mip_data: the subsequent mipmap pixel data (of length mip_size).
-    max_pad is a safeguard to not read more than max_pad padding bytes.
-    """
-    padding = b""
-    while len(padding) < max_pad:
-        pos = file_obj.tell()
-        # Peek at the next 4 bytes without advancing the file pointer
-        candidate = file_obj.read(4)
-        file_obj.seek(pos)
-        if len(candidate) < 4:
-            raise ValueError("Unexpected end of file when peeking for mipmap size")
-        candidate_size = struct.unpack('>I', candidate)[0]
-        # If the candidate equals the expected mipmap size, we are at the size field.
-        if candidate_size == expected_mip_size:
-            break
-        else:
-            # Consume one padding byte and continue.
-            padding += file_obj.read(1)
-    # Now read the 4-byte mipmap size field
-    size_bytes = file_obj.read(4)
-    if len(size_bytes) != 4:
-        raise ValueError("Unexpected end of file when reading mipmap size")
-    mip_size = struct.unpack('>I', size_bytes)[0]
-    # Read the mipmap pixel data.
-    mip_data = file_obj.read(mip_size)
-    return padding, mip_size, mip_data
 
 
-def parse_mipmap_info(file_obj, mipmap_count, width, height):
-    """
-    For each mipmap level (from level 1 to mipmap_count-1), compute the expected mipmap dimensions,
-    then dynamically read padding bytes (using read_padding_and_size) until the next 4-byte integer
-    equals the expected mipmap size.
+
+def save_as_tga(image, file_path):
+    """Save image as TGA format with proper header"""
+    width, height = image.size
     
-    Returns a tuple: (list_of_mipmap_info, final_padding)
-    Each entry in list_of_mipmap_info is a dict with keys:
-      "padding": the bytes read as padding,
-      "size": the mipmap size (as an integer),
-      "data": the mipmap pixel data.
-    The final_padding is the remaining padding after the last mipmap (expected to be 24 bytes).
-    """
-    mip_info = []
-    for level in range(1, mipmap_count):
-        mip_w = max(1, width >> level)
-        mip_h = max(1, height >> level)
-        expected_size = mip_w * mip_h * 4
-        print(f"[Level {level}] Expected dimensions: {mip_w}x{mip_h} (expected {expected_size} bytes)")
-        pad, mip_size, mip_data = read_padding_and_size(file_obj, expected_size)
-        print(f"[Level {level}] Read {len(pad)} padding bytes; size field: {mip_size} bytes; pixel data: {len(mip_data)} bytes")
-        mip_info.append({"padding": pad, "size": mip_size, "data": mip_data})
-    final_padding = file_obj.read(24)
-    print(f"[Final] Read final padding of {len(final_padding)} bytes")
-    return mip_info, final_padding
+    # TGA header (18 bytes)
+    header = bytearray(18)
+    header[0] = 0  # ID length
+    header[1] = 0  # Color map type
+    header[2] = 2  # Image type (uncompressed RGB)
+    header[3:5] = struct.pack('<H', 0)  # Color map offset
+    header[5] = 0  # Color map length
+    header[7] = 32  # Color map depth
+    header[8:10] = struct.pack('<H', 0)  # X origin
+    header[10:12] = struct.pack('<H', 0)  # Y origin
+    header[12:14] = struct.pack('<H', width)  # Width
+    header[14:16] = struct.pack('<H', height)  # Height
+    header[16] = 32  # Bits per pixel
+    header[17] = 0x20  # Image descriptor (top-left origin)
+    
+    # TGA format expects BGRA data
+    if image.mode != 'RGBA':
+        image = image.convert('RGBA')
+    
+    # Convert RGBA to BGRA for TGA format
+    r, g, b, a = image.split()
+    image_bgra = Image.merge("RGBA", (b, g, r, a))
+    
+    with open(file_path, 'wb') as f:
+        f.write(header)
+        f.write(image_bgra.tobytes())
 
 
 def open_file():
@@ -90,68 +79,183 @@ def open_file():
         "s001a_enkeil_rep.bmp.ctxr",
         "s001a_happa05_alp_ovl_mip8000.bmp.ctxr",
         "s001a_soil01_rep_mip8000.bmp.ctxr",
+        "s001a_enkei1_rep.bmp.ctxr",
         "v000a_kinokatamari_a01_alp_ovl_rep.bmp.ctxr",
         "v000a_kinokatamari_a01_alp_ovl_rep.bmp_86187137555744c273e17dd4a431d1a2.ctxr",
+        "v000a_kinokatamari_a02_rep.bmp.ctxr",
         "v000a_kinokatamari_a03_alp_ovl_rep.bmp.ctxr",
         "v000a_kinokatamari_a03_alp_ovl_rep.bmp_d9ec09aa2448dfac3e0b72eca57e0034.ctxr",
     ]
 
-    file_path = filedialog.askopenfilename(title="Select a CTXR file", filetypes=[("CTXR files", "*.ctxr")])
-    if not file_path:
-        return
+    try:
+        file_path = filedialog.askopenfilename(title="Select a CTXR file", filetypes=[("CTXR files", "*.ctxr")])
+        if not file_path:
+            return
 
-    with open(file_path, 'rb') as file_obj:
-        ctxr_header = file_obj.read(132)
-        mipmap_count = struct.unpack_from('>B', ctxr_header, 0x26)[0]
-        pixel_data_length = struct.unpack_from('>I', ctxr_header, 0x80)[0]
-        width = struct.unpack_from('>H', ctxr_header, 8)[0]
-        height = struct.unpack_from('>H', ctxr_header, 10)[0]
-        pixel_data = file_obj.read(pixel_data_length)
-        print(f"Header: {width}x{height} main level, pixel data length: {pixel_data_length}")
-        print(f"Mipmap count from header: {mipmap_count}")
+        with open(file_path, 'rb') as file_obj:
+            ctxr_header = file_obj.read(132)
+            mipmap_count = struct.unpack_from('>B', ctxr_header, 0x26)[0]
+            pixel_data_length = struct.unpack_from('>I', ctxr_header, 0x80)[0]
+            width = struct.unpack_from('>H', ctxr_header, 8)[0]
+            height = struct.unpack_from('>H', ctxr_header, 10)[0]
+            pixel_data = file_obj.read(pixel_data_length)
+            logging.info(f"Header: {width}x{height} main level, pixel data length: {pixel_data_length}")
+            logging.info(f"Mipmap count from header: {mipmap_count}")
 
-        if mipmap_count > 1:
-            original_mipmap_info, original_final_padding = parse_mipmap_info(file_obj, mipmap_count, width, height)
+            if mipmap_count > 1:
+                # Check if this file is DXT5 compressed based on filename
+                filename = os.path.basename(file_path)
+                is_compressed = filename in dxt5_files
+                compression_format = 'DXT5' if is_compressed else 'UNCOMPRESSED'
+                logging.info(f"File format: {compression_format}")
+                
+                original_mipmap_info, original_final_padding = parse_mipmap_info(
+                    file_obj, mipmap_count, width, height, 
+                    is_compressed=is_compressed, 
+                    compression_format=compression_format
+                )
+            else:
+                original_mipmap_info = []
+                original_final_padding = b""
+
+        # Check if this is a DXT5 file
+        filename = os.path.basename(file_path)
+        is_dxt5 = filename in dxt5_files
+        
+        if is_dxt5 and chosen_format.get() != "dds":
+            messagebox.showinfo("DXT5 File", "This is a DXT5 compressed file. Only DDS output is supported.\nPlease select DDS format and try again.")
+            label.config(text="DXT5 files can only be converted to DDS")
+            return
+        
+        # Simple conversion: BGRA to RGBA for display/export
+        # For DXT5 files, pixel_data is compressed, so we handle it differently
+        if is_dxt5:
+            # Don't try to create an image from compressed data
+            # We'll write directly to DDS below
+            image_rgba = None
+            logging.info("DXT5 compressed file - will write directly to DDS")
         else:
-            original_mipmap_info = []
-            original_final_padding = b""
+            # PIL interprets BGRA bytes as RGBA, so we need to swap R and B
+            image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
+            r, g, b, a = image_bgra.split()
+            image_rgba = Image.merge("RGBA", (b, g, r, a))
+        output_file_path = file_path.replace('.ctxr', f'.{chosen_format.get()}')
 
-    # Convert main pixel data from BGRA to RGBA for display or further processing.
-    image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
-    r, g, b, a = image_bgra.split()
-    image_rgba = Image.merge("RGBA", (b, g, r, a))
-    output_file_path = file_path.replace('.ctxr', f'.{chosen_format.get()}')
+        if chosen_format.get() == "dds":
+            # For DXT5 files, write compressed data directly
+            # For uncompressed files, generate mipmaps
+            if is_dxt5:
+                # DXT5 - write compressed data directly
+                dds_header_file = "DDS_header_DXT5.bin"
+                with open(dds_header_file, "rb") as header_file:
+                    dds_header = bytearray(header_file.read())
+                
+                # --- FIX: Calculate accurate Linear Size for Photoshop ---
+                # DXT5 uses 16 bytes per 4x4 block
+                width_blocks = max(1, (width + 3) // 4)
+                height_blocks = max(1, (height + 3) // 4)
+                linear_size = width_blocks * height_blocks * 16
+                # ---------------------------------------------------------
 
-    if chosen_format.get() == "dds":
-        # Generate DDS mipmaps using high-quality Lanczos filtering.
-        mipmaps = [image_rgba]
-        curr_w, curr_h = width, height
-        for i in range(1, mipmap_count):
-            curr_w = max(1, curr_w // 2)
-            curr_h = max(1, curr_h // 2)
-            mip_image = image_rgba.resize((curr_w, curr_h), Image.LANCZOS)
-            mipmaps.append(mip_image)
-            print(f"Generated mipmap level {i+1}: {mip_image.width}x{mip_image.height}")
-        dds_header_file = "DDS_header.bin"
-        if os.path.basename(file_path) in dxt5_files:
-            dds_header_file = "DDS_header_DXT5.bin"
-        with open(dds_header_file, "rb") as header_file:
-            dds_header = bytearray(header_file.read())
-        struct.pack_into("<I", dds_header, 12, height)
-        struct.pack_into("<I", dds_header, 16, width)
-        struct.pack_into("<I", dds_header, 28, mipmap_count)
-        with open(output_file_path, "wb") as dds_file:
-            dds_file.write(dds_header)
-            for mip_image in mipmaps:
-                mip_data = mip_image.tobytes("raw", "BGRA")
-                if len(mip_data) % 4 != 0:
-                    mip_data += b'\x00' * (4 - (len(mip_data) % 4))
-                dds_file.write(mip_data)
-    else:
-        image_rgba.save(output_file_path, chosen_format.get().upper(), compress_level=0)
+                # --- FIX: PAD MAIN PIXEL DATA ---
+                # Ensure main data matches linear_size exactly
+                if len(pixel_data) < linear_size:
+                    padding_needed = linear_size - len(pixel_data)
+                    logging.info(f"Padding main image with {padding_needed} bytes")
+                    pixel_data += b'\x00' * padding_needed
+                # --------------------------------
 
-    label.config(text=f"File saved as {output_file_path}")
+                # Write Dimensions and Size
+                struct.pack_into("<I", dds_header, 12, height)
+                struct.pack_into("<I", dds_header, 16, width)
+                struct.pack_into("<I", dds_header, 20, linear_size)  # Offset 20 is Pitch/LinearSize
+                struct.pack_into("<I", dds_header, 28, mipmap_count)
+                
+                # --- FIX: STRICT FLAGS FOR PHOTOSHOP ---
+                # Standard Flags: CAPS (1) | HEIGHT (2) | WIDTH (4) | PIXELFORMAT (0x1000) | LINEARSIZE (0x80000)
+                required_flags = 0x81007 
+                
+                # Standard Caps: TEXTURE (0x1000)
+                required_caps = 0x1000
 
+                if mipmap_count > 1:
+                    required_flags |= 0x20000   # Add MIPMAPCOUNT flag
+                    required_caps |= 0x400008   # Add COMPLEX (8) and MIPMAP (0x400000) caps
+
+                # Force write the flags (Do not use OR | with existing, overwrite them to be safe)
+                struct.pack_into("<I", dds_header, 8, required_flags)
+                struct.pack_into("<I", dds_header, 104, required_caps)
+                # ----------------------------------------
+                
+                with open(output_file_path, "wb") as dds_file:
+                    dds_file.write(dds_header)
+                    # Write main level compressed data
+                    dds_file.write(pixel_data)
+                    # Write mipmap compressed data with validation
+                    if original_mipmap_info:
+                        for idx, mip_info in enumerate(original_mipmap_info):
+                            mip_level = idx + 1
+                            mip_w = max(1, width >> mip_level)
+                            mip_h = max(1, height >> mip_level)
+                            mip_blocks_w = max(1, (mip_w + 3) // 4)
+                            mip_blocks_h = max(1, (mip_h + 3) // 4)
+                            expected_mip_size = mip_blocks_w * mip_blocks_h * 16
+                            
+                            mip_data = mip_info["data"]
+                            
+                            # Pad mipmap if needed
+                            if len(mip_data) < expected_mip_size:
+                                padding_needed = expected_mip_size - len(mip_data)
+                                logging.warning(f"Mipmap {mip_level} undersized: {len(mip_data)} < {expected_mip_size}, padding {padding_needed} bytes")
+                                mip_data += b'\x00' * padding_needed
+                            elif len(mip_data) > expected_mip_size:
+                                logging.warning(f"Mipmap {mip_level} oversized: {len(mip_data)} > {expected_mip_size}, truncating")
+                                mip_data = mip_data[:expected_mip_size]
+                            
+                            dds_file.write(mip_data)
+                logging.info(f"Wrote DXT5 compressed DDS with {mipmap_count} levels")
+            else:
+                # Uncompressed - generate mipmaps using high-quality Lanczos filtering
+                mipmaps = [image_rgba]
+                curr_w, curr_h = width, height
+                for i in range(1, mipmap_count):
+                    curr_w = max(1, curr_w // 2)
+                    curr_h = max(1, curr_h // 2)
+                    mip_image = image_rgba.resize((curr_w, curr_h), Image.LANCZOS)
+                    mipmaps.append(mip_image)
+                    logging.info(f"Generated mipmap level {i+1}: {mip_image.width}x{mip_image.height}")
+                
+                dds_header_file = "DDS_header.bin"
+                with open(dds_header_file, "rb") as header_file:
+                    dds_header = bytearray(header_file.read())
+                struct.pack_into("<I", dds_header, 12, height)
+                struct.pack_into("<I", dds_header, 16, width)
+                struct.pack_into("<I", dds_header, 28, mipmap_count)
+                
+                with open(output_file_path, "wb") as dds_file:
+                    dds_file.write(dds_header)
+                    for mip_image in mipmaps:
+                        mip_data = mip_image.tobytes("raw", "BGRA")
+                        if len(mip_data) % 4 != 0:
+                            mip_data += b'\x00' * (4 - (len(mip_data) % 4))
+                        dds_file.write(mip_data)
+        elif chosen_format.get() == "tga":
+            save_as_tga(image_rgba, output_file_path)
+        else:
+            image_rgba.save(output_file_path, chosen_format.get().upper(), compress_level=0)
+
+        if is_dxt5:
+            label.config(text=f"DXT5 file saved as {output_file_path} - Use DDS format for DXT5 files")
+        else:
+            label.config(text=f"File saved as {output_file_path}")
+        logging.info(f"Successfully converted {file_path} to {output_file_path}")
+        
+    except Exception as e:
+        error_msg = f"Error processing file: {str(e)}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        messagebox.showerror("Error", error_msg)
+        label.config(text="Error occurred during conversion")
 
 
 def save_as_ctxr():
@@ -161,76 +265,146 @@ def save_as_ctxr():
         label.config(text="Please open a CTXR file first.")
         return
 
-    file_path = filedialog.askopenfilename(
-        title="Select an image file",
-        filetypes=[("All Supported Formats", "*.tga;*.dds;*.png;*.TGA;*.DDS;*.PNG"),
-                   ("TGA files", "*.tga;*.TGA"),
-                   ("DDS files", "*.dds;*.DDS"),
-                   ("PNG files", "*.png;*.PNG")]
-    )
-    if not file_path:
-        return
+    try:
+        file_path = filedialog.askopenfilename(
+            title="Select an image file",
+            filetypes=[("All Supported Formats", "*.tga;*.dds;*.png;*.TGA;*.DDS;*.PNG"),
+                       ("TGA files", "*.tga;*.TGA"),
+                       ("DDS files", "*.dds;*.DDS"),
+                       ("PNG files", "*.png;*.PNG")]
+        )
+        if not file_path:
+            return
 
-    # Retrieve the mipmap count from the original header.
-    mipmap_count = struct.unpack_from('>B', ctxr_header, 0x26)[0]
+        # Retrieve the mipmap count from the original header.
+        mipmap_count = struct.unpack_from('>B', ctxr_header, 0x26)[0]
+        
+        # Check if the original CTXR was DXT5
+        original_pixel_data_length = struct.unpack_from('>I', ctxr_header, 0x80)[0]
+        
+        # If loading a DDS file and original was DXT5, handle specially
+        if file_path.lower().endswith('.dds'):
+            # Read the DDS file directly to preserve compression
+            with open(file_path, 'rb') as dds_file:
+                dds_header = dds_file.read(128)  # DDS header is 128 bytes
+                
+                # Check if it's a DXT5 DDS
+                # DXT5 fourCC is at offset 84 in DDS header
+                fourcc = dds_header[84:88]
+                is_dxt5_dds = (fourcc == b'DXT5')
+                
+                if is_dxt5_dds:
+                    # Read all the compressed data
+                    main_pixel_data = dds_file.read(original_pixel_data_length)
+                    
+                    # Read mipmap data if present
+                    new_mipmap_data = []
+                    if mipmap_count > 1 and original_mipmap_info:
+                        for mip_info in original_mipmap_info:
+                            expected_size = len(mip_info["data"])
+                            mip_data = dds_file.read(expected_size)
+                            new_mipmap_data.append(mip_data)
+                    
+                    # Get dimensions from DDS header
+                    height = struct.unpack_from('<I', dds_header, 12)[0]
+                    width = struct.unpack_from('<I', dds_header, 16)[0]
+                    
+                    total_data_length = len(main_pixel_data)
+                    
+                    # Update header with dimensions and data length
+                    ctxr_header = bytearray(ctxr_header)
+                    struct.pack_into('>H', ctxr_header, 8, width)
+                    struct.pack_into('>H', ctxr_header, 10, height)
+                    struct.pack_into('>I', ctxr_header, 0x80, total_data_length)
+                    struct.pack_into('>B', ctxr_header, 0x26, mipmap_count)
+                    
+                    # Write out the new CTXR file with compressed data
+                    ctxr_file_path = file_path.rsplit('.', 1)[0] + '.ctxr'
+                    with open(ctxr_file_path, 'wb') as f:
+                        f.write(ctxr_header)
+                        f.write(main_pixel_data)
+                        if mipmap_count > 1:
+                            for i, new_data in enumerate(new_mipmap_data):
+                                # Write the original padding exactly
+                                orig_pad = original_mipmap_info[i]["padding"]
+                                f.write(orig_pad)
+                                # For DXT5, don't write size field - data is back-to-back
+                                # Just write the compressed mipmap data
+                                f.write(new_data)
+                            # Write the final padding as originally read
+                            f.write(original_final_padding)
+                        else:
+                            f.write(original_final_padding)
+                    
+                    label.config(text=f"File saved as {ctxr_file_path}")
+                    logging.info(f"Successfully saved DXT5 CTXR file: {ctxr_file_path}")
+                    return
 
-    # Open the new image.
-    image = Image.open(file_path)
-    if image.mode != "RGBA":
-        image = image.convert("RGBA")
-    r, g, b, a = image.split()
-    # CTXR files store data as BGRA.
-    image_bgra = Image.merge("RGBA", (b, g, r, a))
-    width, height = image.size
-    main_pixel_data = image_bgra.tobytes("raw", "BGRA")
-    total_data_length = len(main_pixel_data)
+        # For non-DXT5 or non-DDS files, use the original uncompressed method
+        # Open the new image.
+        image = Image.open(file_path)
+        if image.mode != "RGBA":
+            image = image.convert("RGBA")
+        
+        # Simple conversion: RGBA to BGRA for CTXR format
+        width, height = image.size
+        main_pixel_data = image.tobytes("raw", "BGRA")
+        total_data_length = len(main_pixel_data)
 
-    # Generate new mipmap data from the new image.
-    new_mipmap_data = []
-    if mipmap_count > 1 and original_mipmap_info:
-        mipmaps = [image_bgra]
-        curr_w, curr_h = width, height
-        for i in range(1, mipmap_count):
-            curr_w = max(1, curr_w // 2)
-            curr_h = max(1, curr_h // 2)
-            mip_image = image_bgra.resize((curr_w, curr_h), Image.LANCZOS)
-            mipmaps.append(mip_image)
-        for i, mip_image in enumerate(mipmaps[1:]):
-            new_data = mip_image.tobytes("raw", "BGRA")
-            # Even if new_data is a different length, we preserve the original padding length.
-            new_mipmap_data.append(new_data)
-    else:
-        mipmap_count = 1  # No mipmaps beyond main level
-
-    # Update header with new dimensions and main data length.
-    ctxr_header = bytearray(ctxr_header)
-    struct.pack_into('>H', ctxr_header, 8, width)
-    struct.pack_into('>H', ctxr_header, 10, height)
-    struct.pack_into('>I', ctxr_header, 0x80, total_data_length)
-    struct.pack_into('>B', ctxr_header, 0x26, mipmap_count)
-
-    # Write out the new CTXR file.
-    ctxr_file_path = file_path.rsplit('.', 1)[0] + '.ctxr'
-    with open(ctxr_file_path, 'wb') as f:
-        f.write(ctxr_header)
-        f.write(main_pixel_data)
-        if mipmap_count > 1:
-            for i, new_data in enumerate(new_mipmap_data):
-                # Retrieve the original padding length for this mipmap level.
-                orig_pad = original_mipmap_info[i]["padding"]
-                # Write the original padding exactly.
-                f.write(orig_pad)
-                # Write a new size field based on the new mipmap data length.
-                new_size = len(new_data)
-                f.write(struct.pack('>I', new_size))
-                # Write the new mipmap pixel data.
-                f.write(new_data)
-            # Write the final padding as originally read.
-            f.write(original_final_padding)
+        # Generate new mipmap data from the new image.
+        new_mipmap_data = []
+        if mipmap_count > 1 and original_mipmap_info:
+            mipmaps = [image]
+            curr_w, curr_h = width, height
+            for i in range(1, mipmap_count):
+                curr_w = max(1, curr_w // 2)
+                curr_h = max(1, curr_h // 2)
+                mip_image = image.resize((curr_w, curr_h), Image.LANCZOS)
+                mipmaps.append(mip_image)
+            for i, mip_image in enumerate(mipmaps[1:]):
+                new_data = mip_image.tobytes("raw", "BGRA")
+                # Even if new_data is a different length, we preserve the original padding length.
+                new_mipmap_data.append(new_data)
         else:
-            f.write(original_final_padding)
+            mipmap_count = 1  # No mipmaps beyond main level
 
-    label.config(text=f"File saved as {ctxr_file_path}")
+        # Update header with new dimensions and main data length.
+        ctxr_header = bytearray(ctxr_header)
+        struct.pack_into('>H', ctxr_header, 8, width)
+        struct.pack_into('>H', ctxr_header, 10, height)
+        struct.pack_into('>I', ctxr_header, 0x80, total_data_length)
+        struct.pack_into('>B', ctxr_header, 0x26, mipmap_count)
+
+        # Write out the new CTXR file.
+        ctxr_file_path = file_path.rsplit('.', 1)[0] + '.ctxr'
+        with open(ctxr_file_path, 'wb') as f:
+            f.write(ctxr_header)
+            f.write(main_pixel_data)
+            if mipmap_count > 1:
+                for i, new_data in enumerate(new_mipmap_data):
+                    # Retrieve the original padding length for this mipmap level.
+                    orig_pad = original_mipmap_info[i]["padding"]
+                    # Write the original padding exactly.
+                    f.write(orig_pad)
+                    # Write a new size field based on the new mipmap data length.
+                    new_size = len(new_data)
+                    f.write(struct.pack('>I', new_size))
+                    # Write the new mipmap pixel data.
+                    f.write(new_data)
+                # Write the final padding as originally read.
+                f.write(original_final_padding)
+            else:
+                f.write(original_final_padding)
+
+        label.config(text=f"File saved as {ctxr_file_path}")
+        logging.info(f"Successfully saved CTXR file: {ctxr_file_path}")
+        
+    except Exception as e:
+        error_msg = f"Error saving CTXR file: {str(e)}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        messagebox.showerror("Error", error_msg)
+        label.config(text="Error occurred during save")
 
 
 def batch_convert_ctxr_to_png():
@@ -256,6 +430,8 @@ def batch_convert_ctxr_to_png():
                 pixel_data = f.read(pixel_data_length)
                 if mipmap_count > 1:
                     _ , _ = parse_mipmap_info(f, mipmap_count, width, height)
+            # Simple conversion: BGRA to RGBA for export
+            # PIL interprets BGRA bytes as RGBA, so we need to swap R and B
             image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
             r, g, b, a = image_bgra.split()
             image_rgba = Image.merge("RGBA", (b, g, r, a))
@@ -265,11 +441,60 @@ def batch_convert_ctxr_to_png():
             app.update_idletasks()
         except Exception as e:
             failed_files.append((file, str(e)))
+            logging.error(f"Failed to convert {file}: {e}")
     if failed_files:
         error_messages = "\n".join([f"Error with {name}: {err}" for name, err in failed_files])
         label.config(text=f"Conversion Completed with errors:\n{error_messages}")
+        messagebox.showwarning("Conversion Errors", f"Some files failed to convert. Check log for details.")
     else:
         label.config(text=f"Conversion Completed for folder {folder_path}")
+
+
+def batch_convert_ctxr_to_tga():
+    """New function for batch converting CTXR to TGA format"""
+    folder_path = filedialog.askdirectory(title="Select a folder with CTXR files")
+    if not folder_path:
+        return
+
+    files_to_convert = [f for f in os.listdir(folder_path) if f.endswith('.ctxr')]
+    total_files = len(files_to_convert)
+    progress["maximum"] = total_files
+    progress["value"] = 0
+    failed_files = []
+
+    for file in files_to_convert:
+        file_path = os.path.join(folder_path, file)
+        try:
+            with open(file_path, 'rb') as f:
+                ctxr_header_local = f.read(132)
+                mipmap_count = struct.unpack_from('>B', ctxr_header_local, 0x26)[0]
+                pixel_data_length = struct.unpack_from('>I', ctxr_header_local, 0x80)[0]
+                width = struct.unpack_from('>H', ctxr_header_local, 8)[0]
+                height = struct.unpack_from('>H', ctxr_header_local, 10)[0]
+                pixel_data = f.read(pixel_data_length)
+                if mipmap_count > 1:
+                    _ , _ = parse_mipmap_info(f, mipmap_count, width, height)
+            
+            # Simple conversion: BGRA to RGBA for export
+            # PIL interprets BGRA bytes as RGBA, so we need to swap R and B
+            image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
+            r, g, b, a = image_bgra.split()
+            image_rgba = Image.merge("RGBA", (b, g, r, a))
+            tga_file_path = os.path.join(folder_path, file.replace('.ctxr', '.tga'))
+            save_as_tga(image_rgba, tga_file_path)
+            progress["value"] += 1
+            app.update_idletasks()
+            logging.info(f"Converted {file} to TGA")
+        except Exception as e:
+            failed_files.append((file, str(e)))
+            logging.error(f"Failed to convert {file}: {e}")
+    
+    if failed_files:
+        error_messages = "\n".join([f"Error with {name}: {err}" for name, err in failed_files])
+        label.config(text=f"TGA Conversion Completed with errors:\n{error_messages}")
+        messagebox.showwarning("Conversion Errors", f"Some files failed to convert. Check log for details.")
+    else:
+        label.config(text=f"TGA Conversion Completed for folder {folder_path}")
 
 
 def batch_convert_png_to_ctxr():
@@ -296,12 +521,11 @@ def batch_convert_png_to_ctxr():
             original_mipmap_info_local, original_final_padding_local = parse_mipmap_info(
                 f, mipmap_count, *struct.unpack_from('>HH', ctxr_header_local, 8)
             )
+        # Simple conversion: RGBA to BGRA for CTXR
         image = Image.open(png_file_path)
         if image.mode != "RGBA":
             image = image.convert("RGBA")
-        r, g, b, a = image.split()
-        image_bgra = Image.merge("RGBA", (b, g, r, a))
-        main_pixel_data = image_bgra.tobytes("raw", "BGRA")
+        main_pixel_data = image.tobytes("raw", "BGRA")
         width, height = image.size
 
         ctxr_header_local = bytearray(ctxr_header_local)
@@ -365,8 +589,10 @@ def batch_convert_ctxr_to_dds():
         "s001a_enkeil_rep.bmp.ctxr",
         "s001a_happa05_alp_ovl_mip8000.bmp.ctxr",
         "s001a_soil01_rep_mip8000.bmp.ctxr",
+        "s001a_enkei1_rep.bmp.ctxr",
         "v000a_kinokatamari_a01_alp_ovl_rep.bmp.ctxr",
         "v000a_kinokatamari_a01_alp_ovl_rep.bmp_86187137555744c273e17dd4a431d1a2.ctxr",
+        "v000a_kinokatamari_a02_rep.bmp.ctxr",
         "v000a_kinokatamari_a03_alp_ovl_rep.bmp.ctxr",
         "v000a_kinokatamari_a03_alp_ovl_rep.bmp_d9ec09aa2448dfac3e0b72eca57e0034.ctxr",
     ]
@@ -379,6 +605,9 @@ def batch_convert_ctxr_to_dds():
     for file in files_to_convert:
         file_path = os.path.join(folder_path, file)
         try:
+            # Check if this file is DXT5 compressed based on filename
+            is_dxt5 = file in dxt5_files
+            
             with open(file_path, 'rb') as f:
                 ctxr_header_local = f.read(132)
                 mipmap_count = struct.unpack_from('>B', ctxr_header_local, 0x26)[0]
@@ -388,59 +617,176 @@ def batch_convert_ctxr_to_dds():
                 pixel_data = f.read(pixel_data_length)
                 mipmaps_data = []
                 if mipmap_count > 1:
-                    mipmaps_data, final_pad = parse_mipmap_info(f, mipmap_count, width, height)
+                    # Check if this file is DXT5 compressed based on filename
+                    is_compressed = is_dxt5
+                    compression_format = 'DXT5' if is_compressed else 'UNCOMPRESSED'
+                    
+                    mipmaps_data, final_pad = parse_mipmap_info(
+                        f, mipmap_count, width, height,
+                        is_compressed=is_compressed,
+                        compression_format=compression_format
+                    )
                 else:
-                    print("No mipmaps present; single level CTXR.")
-            image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
-            r, g, b, a = image_bgra.split()
-            image_rgba = Image.merge("RGBA", (b, g, r, a))
-            mipmaps = [image_rgba]
-            curr_w, curr_h = width, height
-            for i in range(1, mipmap_count):
-                curr_w = max(1, curr_w // 2)
-                curr_h = max(1, curr_h // 2)
-                mip_image = image_rgba.resize((curr_w, curr_h), Image.LANCZOS)
-                mipmaps.append(mip_image)
-
-            dds_header_file = "DDS_header.bin"
-            if file in dxt5_files:
+                    logging.info("No mipmaps present; single level CTXR.")
+            
+            
+            
+            # Handle DXT5 and uncompressed files differently
+            if is_dxt5:
+                # DXT5 - write compressed data directly to DDS
                 dds_header_file = "DDS_header_DXT5.bin"
+                with open(dds_header_file, "rb") as header_file:
+                    dds_header = bytearray(header_file.read())
+                
+                # Calculate Linear Size
+                width_blocks = max(1, (width + 3) // 4)
+                height_blocks = max(1, (height + 3) // 4)
+                linear_size = width_blocks * height_blocks * 16
+                
+                struct.pack_into("<I", dds_header, 12, height)
+                struct.pack_into("<I", dds_header, 16, width)
+                struct.pack_into("<I", dds_header, 20, linear_size)
+                struct.pack_into("<I", dds_header, 28, mipmap_count)
+                
+                # FLAGS
+                required_flags = 0x81007 
+                required_caps = 0x1000
 
-            with open(dds_header_file, "rb") as header_file:
-                dds_header = bytearray(header_file.read())
+                if mipmap_count > 1:
+                    required_flags |= 0x20000
+                    required_caps |= 0x400008
 
-            struct.pack_into("<I", dds_header, 12, height)
-            struct.pack_into("<I", dds_header, 16, width)
-            struct.pack_into("<I", dds_header, 28, mipmap_count)
+                struct.pack_into("<I", dds_header, 8, required_flags)
+                struct.pack_into("<I", dds_header, 104, required_caps)
+                
+                
+                # Define the path variable specifically for this function
+                dds_file_path = os.path.join(output_folder_path, file.replace('.ctxr', '.dds'))
+                
+                # USE dds_file_path HERE (Not output_file_path)
+                with open(dds_file_path, "wb") as dds_file:
+                    dds_file.write(dds_header)
+                    
+                    # Pad main pixel data if needed
+                    if len(pixel_data) < linear_size:
+                        padding_needed = linear_size - len(pixel_data)
+                        logging.info(f"Padding main image with {padding_needed} bytes")
+                        pixel_data += b'\x00' * padding_needed
+                    
+                    dds_file.write(pixel_data)
+                    
+                    # Write mipmaps with validation
+                    if mipmaps_data:
+                        for idx, mip_info in enumerate(mipmaps_data):
+                            mip_level = idx + 1
+                            mip_w = max(1, width >> mip_level)
+                            mip_h = max(1, height >> mip_level)
+                            mip_blocks_w = max(1, (mip_w + 3) // 4)
+                            mip_blocks_h = max(1, (mip_h + 3) // 4)
+                            expected_mip_size = mip_blocks_w * mip_blocks_h * 16
+                            
+                            mip_data = mip_info["data"]
+                            
+                            # Pad mipmap if needed
+                            if len(mip_data) < expected_mip_size:
+                                padding_needed = expected_mip_size - len(mip_data)
+                                logging.warning(f"Mipmap {mip_level} undersized: {len(mip_data)} < {expected_mip_size}, padding {padding_needed} bytes")
+                                mip_data += b'\x00' * padding_needed
+                            elif len(mip_data) > expected_mip_size:
+                                logging.warning(f"Mipmap {mip_level} oversized: {len(mip_data)} > {expected_mip_size}, truncating")
+                                mip_data = mip_data[:expected_mip_size]
+                            
+                            dds_file.write(mip_data)
+                logging.info(f"Wrote DXT5 compressed DDS: {file}")
+            else:
+                # Uncompressed - convert BGRA to RGBA and generate mipmaps
+                # PIL interprets BGRA bytes as RGBA, so we need to swap R and B
+                image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
+                r, g, b, a = image_bgra.split()
+                image_rgba = Image.merge("RGBA", (b, g, r, a))
+                mipmaps = [image_rgba]
+                curr_w, curr_h = width, height
+                for i in range(1, mipmap_count):
+                    curr_w = max(1, curr_w // 2)
+                    curr_h = max(1, curr_h // 2)
+                    mip_image = image_rgba.resize((curr_w, curr_h), Image.LANCZOS)
+                    mipmaps.append(mip_image)
 
-            dds_file_path = os.path.join(output_folder_path, file.replace('.ctxr', '.dds'))
-            with open(dds_file_path, "wb") as dds_file:
-                dds_file.write(dds_header)
-                for mip_image in mipmaps:
-                    mip_data = mip_image.tobytes("raw", "BGRA")
-                    if len(mip_data) % 4 != 0:
-                        mip_data += b'\x00' * (4 - (len(mip_data) % 4))
-                    dds_file.write(mip_data)
+                dds_header_file = "DDS_header.bin"
+                with open(dds_header_file, "rb") as header_file:
+                    dds_header = bytearray(header_file.read())
+
+                struct.pack_into("<I", dds_header, 12, height)
+                struct.pack_into("<I", dds_header, 16, width)
+                struct.pack_into("<I", dds_header, 28, mipmap_count)
+
+                dds_file_path = os.path.join(output_folder_path, file.replace('.ctxr', '.dds'))
+                with open(dds_file_path, "wb") as dds_file:
+                    dds_file.write(dds_header)
+                    for mip_image in mipmaps:
+                        mip_data = mip_image.tobytes("raw", "BGRA")
+                        if len(mip_data) % 4 != 0:
+                            mip_data += b'\x00' * (4 - (len(mip_data) % 4))
+                        dds_file.write(mip_data)
             progress["value"] += 1
             app.update_idletasks()
         except Exception as e:
-            print(f"Failed to convert {file}: {e}")
+            logging.error(f"Failed to convert {file}: {e}")
     label.config(text=f"Conversion Completed for folder {folder_path}")
+
+
+def batch_convert_dds_to_ctxr():
+    """Batch convert DDS files to CTXR format"""
+    dds_folder_path = filedialog.askdirectory(title="Select a folder with DDS files")
+    template_folder_path = filedialog.askdirectory(title="Select a folder with original CTXR files for headers")
+    output_folder_path = filedialog.askdirectory(title="Select a destination folder for CTXR files")
+    
+    if not dds_folder_path or not template_folder_path or not output_folder_path:
+        return
+    
+    try:
+        from dds_module import batch_convert_dds_to_ctxr_enhanced
+        success_count, error_files = batch_convert_dds_to_ctxr_enhanced(
+            dds_folder_path, output_folder_path, template_folder_path
+        )
+        
+        if error_files:
+            error_messages = "\n".join([f"Error with {name}: {err}" for name, err in error_files])
+            label.config(text=f"DDS to CTXR conversion completed with {len(error_files)} errors")
+            messagebox.showwarning("Conversion Errors", f"Some files failed to convert. Check log for details.")
+        else:
+            label.config(text=f"DDS to CTXR conversion completed successfully: {success_count} files")
+            messagebox.showinfo("Success", f"Successfully converted {success_count} files")
+            
+    except Exception as e:
+        error_msg = f"Batch conversion error: {str(e)}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        messagebox.showerror("Error", error_msg)
 
 
 def batch_convert():
     func_map = {
         'ctxr to png': batch_convert_ctxr_to_png,
+        'ctxr to tga': batch_convert_ctxr_to_tga,
         'png to ctxr': batch_convert_png_to_ctxr,
         'ctxr to dds': batch_convert_ctxr_to_dds,
         'dds to ctxr': batch_convert_dds_to_ctxr,
     }
-    func_map[chosen_batch_format.get()]()
+    try:
+        func_map[chosen_batch_format.get()]()
+    except KeyError:
+        messagebox.showerror("Error", "Selected batch format not implemented yet")
+    except Exception as e:
+        error_msg = f"Batch conversion error: {str(e)}"
+        logging.error(error_msg)
+        logging.error(traceback.format_exc())
+        messagebox.showerror("Error", error_msg)
 
 
 # Initialize main application window
 app = tk.Tk()
-app.title("CTXR Converter 1.6 by 316austin316")
+app.title("CTXR Converter 2.0 by 316austin316")
 app.geometry("700x600")
 
 icon_path = "resources/face.PNG"
@@ -483,7 +829,11 @@ chosen_format = StringVar(value=format_options[0])
 format_dropdown = OptionMenu(general_frame, chosen_format, *format_options)
 format_dropdown.grid(row=3, column=0, pady=10, padx=5, sticky="ew")
 
-batch_format_options = ["ctxr to png", "png to ctxr", "ctxr to dds", "dds to ctxr"]
+# Add info label for DXT5 files
+dxt5_info_label = Label(general_frame, text="⚠️ DXT5 files require DDS format", font=("Arial", 8), fg="#FF5722")
+dxt5_info_label.grid(row=3, column=1, pady=10, padx=5, sticky="w")
+
+batch_format_options = ["ctxr to png", "ctxr to tga", "png to ctxr", "ctxr to dds", "dds to ctxr"]
 chosen_batch_format = StringVar(value=batch_format_options[0])
 batch_format_dropdown = OptionMenu(general_frame, chosen_batch_format, *batch_format_options)
 batch_format_dropdown.grid(row=4, column=0, pady=10, padx=5, sticky="ew")
@@ -491,7 +841,10 @@ batch_format_dropdown.grid(row=4, column=0, pady=10, padx=5, sticky="ew")
 batch_convert_button = Button(general_frame, text="Batch Convert", command=batch_convert, bg='#2196F3', fg='white', font=("Arial", 10, "bold"))
 batch_convert_button.grid(row=4, column=1, pady=10, padx=5, sticky="ew")
 
-for i in range(5):
+viewer_button = Button(general_frame, text="Open Image Viewer", command=lambda: ImageViewer(app), bg='#FF5722', fg='white', font=("Arial", 10, "bold"))
+viewer_button.grid(row=5, column=0, columnspan=2, pady=10, padx=5, sticky="ew")
+
+for i in range(6):
     general_frame.grid_rowconfigure(i, weight=1)
 for i in range(2):
     general_frame.grid_columnconfigure(i, weight=1)
