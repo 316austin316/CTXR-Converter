@@ -1,0 +1,8 @@
+*.png
+*.ctxr
+*.dds
+build/
+dist/
+__pycache__/
+ctxr_converter.log
+ctxr3.spec

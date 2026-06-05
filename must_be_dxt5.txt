@@ -1,0 +1,17 @@
+# Textures that MUST be provided as DXT5 DDS files.
+# Matching is case-insensitive. Lines starting with # or // are comments.
+
+jngl_happa04_alp_ovl.bmp
+jngl_happa04_alp_ovl_mip16000.bmp
+jngl_happa04_alp_ovl_mip16000.bmp_c82c791b86086ed52d483520273e9b5b
+jngl_happa04_alp_ovl_mip8000.bmp
+jngl_happa05_alp_ovl_mip4000.bmp
+jngl_taki_eda_12_alp_ovl_mip8000.bmp
+jngl_taki_eda_17_alp_ovl_mip4000.bmp
+s001a_enkeil_rep.bmp
+s001a_happa05_alp_ovl_mip8000.bmp
+s001a_soil01_rep_mip8000.bmp
+v000a_kinokatamari_a01_alp_ovl_rep.bmp
+v000a_kinokatamari_a01_alp_ovl_rep.bmp_86187137555744c273e17dd4a431d1a2
+v000a_kinokatamari_a03_alp_ovl_rep.bmp
+v000a_kinokatamari_a03_alp_ovl_rep.bmp_d9ec09aa2448dfac3e0b72eca57e0034

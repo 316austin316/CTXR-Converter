@@ -1,10 +1,23 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
+import io
 import struct
 import os
 import logging
-from ctxr_utils import parse_mipmap_info, CTXRError
+import numpy as np
+
+from ctxr_utils import (
+    read_ctxr, parse_header, CTXRError,
+    FORMAT_A8R8G8B8, FORMAT_DXT1, FORMAT_DXT3, FORMAT_DXT5, FORMAT_NAMES,
+)
+from dds_module import create_dds_header
+
+try:
+    from ps3_ctxr_module import _read_ps3, PS3_MAGIC, parse_ps3_header
+    _HAS_PS3 = True
+except Exception:
+    _HAS_PS3 = False
 
 
 class ImageViewer:
@@ -93,164 +106,83 @@ class ImageViewer:
         self.window.bind('<Control-0>', lambda e: self.fit_to_window())
         self.window.bind('<Control-1>', lambda e: self.actual_size())
         
+    def _decode_mips_to_pil(self, width, height, fmt_name, mips):
+        images = []
+        for level, data in enumerate(mips):
+            mw = max(1, width >> level)
+            mh = max(1, height >> level)
+            if fmt_name == "A8R8G8B8":
+                img = Image.frombytes("RGBA", (mw, mh), data, "raw", "BGRA")
+            else:
+                # Build a one-level DDS for this mip and let PIL decode it.
+                hdr = create_dds_header(mw, mh, 1, fmt_name)
+                buf = io.BytesIO(bytes(hdr) + data)
+                img = Image.open(buf)
+                img.load()
+                img = img.convert("RGBA")
+
+            # Alpha is stored ps2 0-> 128 range, scale it up for the viewer.
+            alpha = img.getchannel("A")
+            alpha = alpha.point(lambda a: min(a * 2, 255))
+            img.putalpha(alpha)
+
+            images.append(img)
+        return images
+
     def open_ctxr_file(self):
-        """Open and display a CTXR file"""
         file_path = filedialog.askopenfilename(
             title="Select a CTXR file",
-            filetypes=[("CTXR files", "*.ctxr")]
+            filetypes=[("CTXR files", "*.ctxr")],
         )
         if not file_path:
             return
-        
-        # List of DXT5 compressed files
-        dxt5_files = [
-            "jngl_happa04_alp_ovl.bmp.ctxr",
-            "jngl_happa04_alp_ovl_mip16000.bmp.ctxr",
-            "jngl_happa04_alp_ovl_mip16000.bmp_c82c791b86086ed52d483520273e9b5b.ctxr",
-            "jngl_happa04_alp_ovl_mip8000.bmp.ctxr",
-            "jngl_happa05_alp_ovl_mip4000.bmp.ctxr",
-            "jngl_taki_eda_12_alp_ovl_mip8000.bmp.ctxr",
-            "jngl_taki_eda_17_alp_ovl_mip4000.bmp.ctxr",
-            "s001a_enkeil_rep.bmp.ctxr",
-            "s001a_happa05_alp_ovl_mip8000.bmp.ctxr",
-            "s001a_soil01_rep_mip8000.bmp.ctxr",
-            "v000a_kinokatamari_a01_alp_ovl_rep.bmp.ctxr",
-            "v000a_kinokatamari_a01_alp_ovl_rep.bmp_86187137555744c273e17dd4a431d1a2.ctxr",
-            "v000a_kinokatamari_a03_alp_ovl_rep.bmp.ctxr",
-            "v000a_kinokatamari_a03_alp_ovl_rep.bmp_d9ec09aa2448dfac3e0b72eca57e0034.ctxr",
-        ]
-            
+
         try:
-            # Check if this is a DXT5 file
-            filename = os.path.basename(file_path)
-            is_dxt5 = filename in dxt5_files
-            
-            with open(file_path, 'rb') as f:
-                self.ctxr_header = f.read(132)
-                mipmap_count = struct.unpack_from('>B', self.ctxr_header, 0x26)[0]
-                pixel_data_length = struct.unpack_from('>I', self.ctxr_header, 0x80)[0]
-                width = struct.unpack_from('>H', self.ctxr_header, 8)[0]
-                height = struct.unpack_from('>H', self.ctxr_header, 10)[0]
-                pixel_data = f.read(pixel_data_length)
-                
-                # Parse mipmaps if present
-                mipmap_info_list = []
-                if mipmap_count > 1:
-                    is_compressed = is_dxt5
-                    compression_format = 'DXT5' if is_compressed else 'UNCOMPRESSED'
-                    mipmap_info_list, _ = parse_mipmap_info(f, mipmap_count, width, height, 
-                                                       is_compressed=is_compressed,
-                                                       compression_format=compression_format)
-                
-                if is_dxt5:
-                    # DXT5 - decompress via temporary DDS file
-                    import tempfile
-                    
-                    with tempfile.NamedTemporaryFile(suffix='.dds', delete=False) as temp_dds:
-                        # Write DDS header
-                        dds_header_file = "DDS_header_DXT5.bin"
-                        try:
-                            with open(dds_header_file, "rb") as header_file:
-                                dds_header = bytearray(header_file.read())
-                        except FileNotFoundError:
-                            messagebox.showerror("Error", 
-                                               "DDS_header_DXT5.bin not found.\n"
-                                               "Please ensure it's in the same directory as the script.")
-                            return
-                        
-                        struct.pack_into("<I", dds_header, 12, height)
-                        struct.pack_into("<I", dds_header, 16, width)
-                        struct.pack_into("<I", dds_header, 28, mipmap_count)
-                        
-                        temp_dds.write(dds_header)
-                        temp_dds.write(pixel_data)
-                        
-                        # Write mipmaps
-                        for mip_info in mipmap_info_list:
-                            temp_dds.write(mip_info["data"])
-                        
-                        temp_dds_path = temp_dds.name
-                    
-                    # Try to open the DDS file with PIL
-                    try:
-                        dds_image = Image.open(temp_dds_path)
-                        main_image = dds_image.convert('RGBA')
-                        
-                        # Try to extract mipmaps from DDS
-                        self.mipmaps = []
-                        # PIL doesn't easily expose DDS mipmaps, so we'll just show the main level
-                        
-                    except Exception as e:
-                        logging.error(f"Failed to open DDS file: {e}")
-                        messagebox.showerror("Error", 
-                                           "Could not decompress DXT5 data.\n"
-                                           "You may need to install 'pillow-dds' plugin:\n"
-                                           "pip install pillow-dds\n\n"
-                                           "Or convert to DDS manually first.")
-                        return
-                    finally:
-                        # Clean up temp file
-                        try:
-                            os.unlink(temp_dds_path)
-                        except:
-                            pass
-                else:
-                    # Uncompressed - process normally
-                    self.mipmaps = []
-                    for idx, mip_info in enumerate(mipmap_info_list):
-                        mip_data = mip_info["data"]
-                        mip_level = idx + 1  # Level 1, 2, 3, etc.
-                        mip_w = max(1, width >> mip_level)
-                        mip_h = max(1, height >> mip_level)
-                        expected_bytes = mip_w * mip_h * 4
-                        
-                        logging.info(f"Processing mipmap level {mip_level}: {mip_w}x{mip_h}, expected {expected_bytes} bytes, got {len(mip_data)} bytes")
-                        
-                        if len(mip_data) != expected_bytes:
-                            logging.error(f"Mipmap {mip_level} data size mismatch! Expected {expected_bytes}, got {len(mip_data)}. Skipping this mipmap.")
-                            continue  # Skip this mipmap instead of trying to load it with wrong size
-                        
-                        try:
-                            # Load the raw data
-                            mip_image = Image.frombytes('RGBA', (mip_w, mip_h), mip_data)
-                            r, g, b, a = mip_image.split()
-                            
-                            # TEST ALL POSSIBLE ARRANGEMENTS
-                            # We'll try ARGB format (common in some texture formats)
-                            # If stored as ARGB but read as RGBA:
-                            # File bytes: A R G B A R G B ...
-                            # PIL reads as: R G B A R G B A ...
-                            # So PIL's R = file's A, G = file's R, B = file's G, A = file's B
-                            # To correct: R=G (file's R), G=B (file's G), B=A (file's B), A=R (file's A)
-                            
-                            mip_rgba = Image.merge("RGBA", (g, r, a, b))  # GRAB interpretation
-                            
-                            self.mipmaps.append(mip_rgba)
-                            
-                            logging.info(f"Loaded mipmap {mip_level} using ARGB byte order")
-                        except Exception as e:
-                            logging.error(f"Failed to create mipmap {mip_level}: {e}")
-                            continue
-                    
-                    # Convert main image
-                    image_bgra = Image.frombytes('RGBA', (width, height), pixel_data)
-                    r, g, b, a = image_bgra.split()
-                    main_image = Image.merge("RGBA", (b, g, r, a))
-                
-                # Store all mipmap levels
-                self.all_images = [main_image] + self.mipmaps
-                
-                # Update mipmap selector
-                mipmap_values = [str(i) for i in range(len(self.all_images))]
-                self.mipmap_combo['values'] = mipmap_values
-                self.mipmap_var.set("0")
-                
-                self.current_image_path = file_path
-                self.display_image(main_image)
-                
-                format_str = "DXT5 compressed" if is_dxt5 else "uncompressed"
-                self.status_var.set(f"Loaded: {os.path.basename(file_path)} ({width}x{height}, {format_str}, {len(self.all_images)} levels)")
-                
+            with open(file_path, "rb") as f:
+                magic = f.read(4)
+
+            is_ps3 = _HAS_PS3 and magic == PS3_MAGIC
+
+            if is_ps3:
+                h = parse_ps3_header(open(file_path, "rb").read(128))
+                _, mips = _read_ps3(file_path)
+                width, height = h.width, h.height
+                fmt_name = h.dds_format
+                platform = "PS3"
+            else:
+                tex = read_ctxr(file_path)
+                width = tex.header.width
+                height = tex.header.height
+                fmt_name = FORMAT_NAMES.get(tex.header.format, "")
+                mips = tex.mips
+                platform = "PC"
+
+            if fmt_name not in ("A8R8G8B8", "DXT1", "DXT3", "DXT5"):
+                messagebox.showerror(
+                    "Unsupported format",
+                    f"This viewer can't display {fmt_name or 'this'} textures.",
+                )
+                return
+
+            self.all_images = self._decode_mips_to_pil(width, height, fmt_name, mips)
+            if not self.all_images:
+                messagebox.showerror("Error", "No image data found.")
+                return
+            main_image = self.all_images[0]
+
+            mipmap_values = [str(i) for i in range(len(self.all_images))]
+            self.mipmap_combo['values'] = mipmap_values
+            self.mipmap_var.set("0")
+
+            self.current_image_path = file_path
+            self.display_image(main_image)
+
+            self.status_var.set(
+                f"Loaded: {os.path.basename(file_path)} "
+                f"({width}x{height}, {platform} {fmt_name}, "
+                f"{len(self.all_images)} levels)"
+            )
+
         except Exception as e:
             error_msg = f"Error loading CTXR file: {str(e)}"
             logging.error(error_msg)
@@ -358,28 +290,40 @@ class ImageViewer:
     
     def zoom_out(self):
         """Zoom out by 25%"""
-        self.zoom_factor /= 1.25
+        if not self.current_image:
+            return
+
+        new_zoom_factor = self.zoom_factor / 1.25
+
+        new_width = int(self.current_image.width * new_zoom_factor)
+        new_height = int(self.current_image.height * new_zoom_factor)
+
+        if new_width < 1 or new_height < 1:
+            return
+
+        self.zoom_factor = new_zoom_factor
         self.apply_zoom()
     
     def apply_zoom(self):
         """Apply current zoom factor to the image"""
         if not self.current_image:
             return
-            
+
         # Resize image
-        new_width = int(self.current_image.width * self.zoom_factor)
-        new_height = int(self.current_image.height * self.zoom_factor)
+        new_width = max(1, int(self.current_image.width * self.zoom_factor))
+        new_height = max(1, int(self.current_image.height * self.zoom_factor))
+
         resized_image = self.current_image.resize((new_width, new_height), Image.LANCZOS)
-        
+
         # Update display
         self.photo = ImageTk.PhotoImage(resized_image)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor='nw', image=self.photo)
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
-        
+
         # Update status
         self.status_var.set(f"Zoom: {self.zoom_factor:.2f}x ({new_width}x{new_height})")
-    
+
     def on_mouse_down(self, event):
         """Handle mouse button press for panning"""
         self.canvas.scan_mark(event.x, event.y)
